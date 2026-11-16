@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux gcc
+            os: ubuntu-latest
+            flags: -DCMAKE_CXX_COMPILER=g++ -DRR_WERROR=ON
+          - name: linux clang
+            os: ubuntu-latest
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DRR_WERROR=ON
+          - name: macos clang
+            os: macos-latest
+            flags: -DRR_WERROR=ON
+          - name: windows msvc
+            os: windows-latest
+            flags: ""
+          - name: address and undefined sanitizers
+            os: ubuntu-latest
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DRR_SANITIZE_ADDRESS=ON
+          - name: thread sanitizer
+            os: ubuntu-latest
+            flags: -DCMAKE_CXX_COMPILER=clang++ -DRR_SANITIZE_THREAD=ON
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo ${{ matrix.flags }}
+      - name: build
+        run: cmake --build build --config RelWithDebInfo --parallel 4
+      - name: test
+        run: ctest --test-dir build --build-config RelWithDebInfo --output-on-failure
+
+  pipeline:
+    name: end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRR_WERROR=ON
+          cmake --build build --parallel 4
+      - name: generate import and prepare
+        run: |
+          ./build/roadroute generate --out city --nodes 60000 --seed 5
+          ./build/roadroute import --graph city.gr --coords city.co --out city.rrg
+          ./build/roadroute prepare --graph city.rrg --threads 4 --landmark-count 8 --quiet
+      - name: check every algorithm against dijkstra
+        run: ./build/roadroute difftest --graph city.rrg --queries 300
+      - name: benchmark
+        run: ./build/roadroute bench --graph city.rrg --queries 200 --table 32 --threads 4
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check formatting
+        run: find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format --dry-run --Werror

@@ -1,0 +1,8 @@
+build/
+data/
+*.rrg
+*.rrch
+*.rrl
+*.gr
+*.co
+*.gz
