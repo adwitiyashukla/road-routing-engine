@@ -140,43 +140,37 @@ only.
 
 ## Results
 
-Measured on a 2 core cloud machine with GCC 13 at `-O2`. The first table is the real North-West US
-road network from the DIMACS data, 1,089,933 nodes and 2,545,844 arcs on the travel time metric,
-over 200 random queries. The numbers on your own machine will differ, which is what `bench` is for.
+Measured on my laptop, an HP OmniBook 5 with an Intel Core 5 120U, 12 threads and 8 GB of memory,
+on Windows 11 with MinGW GCC 15.2 at `-O2`. The graph is the real North-West US road network from
+the DIMACS data, 1,089,933 nodes and 2,545,844 arcs on the travel time metric, and every row is the
+same 200 random queries from seed 3.
 
 | algorithm | mean ms | median ms | p99 ms | settled nodes | speedup |
 | --- | --- | --- | --- | --- | --- |
-| dijkstra | 79.2054 | 72.3811 | 176.3563 | 539,493 | 1.0x |
-| bidirectional | 61.3065 | 59.8326 | 147.5309 | 356,321 | 1.3x |
-| astar | 55.7554 | 42.4453 | 221.0268 | 247,253 | 1.4x |
-| bidirectional-astar | 55.0512 | 47.5242 | 209.9961 | 183,463 | 1.4x |
-| alt | 8.7151 | 5.9391 | 42.0089 | 70,756 | 9.1x |
-| bidirectional-alt | 4.5574 | 1.6520 | 41.4834 | 18,110 | 17.4x |
-| ch | 0.0744 | 0.0726 | 0.1153 | 142 | 1064.4x |
+| dijkstra | 184.3175 | 177.7717 | 393.7508 | 539,493 | 1.0x |
+| bidirectional | 133.6720 | 130.6472 | 326.9565 | 356,321 | 1.4x |
+| astar | 129.6191 | 99.7899 | 483.5898 | 247,253 | 1.4x |
+| bidirectional-astar | 135.0364 | 118.4034 | 498.2432 | 183,463 | 1.4x |
+| alt | 17.4791 | 10.7231 | 101.6983 | 70,756 | 10.5x |
+| bidirectional-alt | 7.1808 | 2.2895 | 69.0990 | 18,110 | 25.7x |
+| ch | 0.0455 | 0.0379 | 0.1997 | 142 | 4051x |
 
-A synthetic network of 2,005,174 nodes and 4,754,352 arcs, over 120 random queries, to see that it
-holds up at twice the size:
+Each row is its own `bench --algorithms <name>` run, so no algorithm pays for another one's memory
+traffic. Running them together in one process is also supported and gives different query times for
+the same work, which is the first thing under the next heading.
 
-| algorithm | mean ms | median ms | p99 ms | settled nodes | speedup |
-| --- | --- | --- | --- | --- | --- |
-| dijkstra | 193.9923 | 188.1781 | 415.2941 | 1,072,402 | 1.0x |
-| bidirectional | 142.2131 | 114.4673 | 384.8583 | 664,858 | 1.4x |
-| astar | 117.6770 | 77.3308 | 534.1951 | 433,679 | 1.6x |
-| bidirectional-astar | 109.2288 | 45.5326 | 663.9998 | 275,707 | 1.8x |
-| alt | 11.9775 | 8.2809 | 59.2801 | 95,308 | 16.2x |
-| bidirectional-alt | 1.5333 | 1.1479 | 7.1878 | 6,257 | 126.5x |
-| ch | 0.1219 | 0.1203 | 0.2041 | 247 | 1591.0x |
+Preprocessing, on the same laptop:
 
-Preprocessing, on the same machine with 2 threads:
+| step | time | result |
+| --- | --- | --- |
+| import | 1.34 s | 31.9 MB graph file |
+| hierarchy, 12 threads | 10.09 s | 2,050,351 shortcuts, 69.2 MB, 76 rounds, 10,187,358 witness searches |
+| 16 landmarks | 17.53 s | 133.0 MB |
 
-| graph | import | hierarchy | shortcuts | hierarchy file | landmarks | landmark file |
-| --- | --- | --- | --- | --- | --- | --- |
-| North-West US, 1,089,933 nodes | 1.21 s | 17.83 s | 2,050,351 | 69.2 MB | 7.03 s for 16 | 133.0 MB |
-| synthetic, 2,005,174 nodes | 1.47 s | 37.41 s | 5,285,095 | 145.5 MB | 9.24 s for 8 | 122.4 MB |
-
-On the North-West US graph a 256 by 256 table, so 65,536 pairs, takes 0.009 s on 2 threads, which
-is 0.14 microseconds per pair. Peak memory is 133 MB with the graph and the hierarchy loaded, and
-493 MB with the landmark tables and every algorithm's search state as well.
+A 256 by 256 distance table, so 65,536 pairs, takes 0.006 s on 12 threads, which is 0.09
+microseconds per pair. The graph and the hierarchy are memory mapped, so a server starts answering
+immediately and only the pages it touches are read. The landmark tables cost 8 bytes per node per
+landmark, which is why they are the part to drop first on a small machine.
 
 ## Things I ran into
 
@@ -187,15 +181,16 @@ in front of each arc, and node ids counting from zero instead of one. Rather tha
 with a throwaway script that would not be in the repo, the reader now recognizes both layouts from
 the header line, so either file works as input and the tests cover both.
 
-**The same query is slower when other algorithms share the process.** In the comparison above the
-hierarchy answers in 0.0744 ms on the North-West US graph. Running 20,000 queries with
-`--algorithms ch` and nothing else gives 0.0261 ms, nearly three times faster, because the Dijkstra
-runs in between sweep half a million nodes and push the hierarchy out of cache. The first
-number is the one that belongs in a comparison table, since every algorithm pays the same price
-there, and the second is what a server that only answers with the hierarchy actually does. The
-benchmark also interleaves the algorithms query by query after a warmup round instead of running
-each to completion, because when they ran one after another the last one in line was the one that
-got the throttled clock.
+**The same query is slower when other algorithms share the process.** A hierarchy query on this
+graph takes 0.0455 ms in its own run. Put Dijkstra in the same process and it becomes 0.1465 ms,
+because Dijkstra's sweep over half a million nodes leaves nothing of the hierarchy in cache. Load
+the 133 MB landmark table as well and run ALT between the hierarchy queries, and the mean goes to
+5.9565 ms with a p99 of 49 ms, since on an 8 GB laptop walking that table evicts the memory mapped
+hierarchy from the page cache and the next query faults it back off the disk. Same 142 settled
+nodes in all three, so none of it is the algorithm. The table above therefore measures one
+algorithm per run, and the benchmark interleaves the algorithms query by query when several are
+selected, after a warmup round, because when they ran one after another the last one in line was
+the one that got the throttled clock.
 
 **Nothing was checking four bytes of the file header.** The graph file reserves a 32 bit field in
 its header for a future flag. A test that flips every single bit of a written file and expects the
@@ -232,7 +227,8 @@ with the real great circle distance and insists the tree returns a node at the s
   algorithm rather than another shortest path search.
 - Every returned path is walked arc by arc: it has to start at the source, end at the target, use
   arcs that exist in the graph, and sum to the distance the query reported.
-- Hierarchy files are built with 1, 2 and 4 threads and have to give the same answers.
+- Hierarchy files are built with 1, 2 and 4 threads and have to give the same answers. On the real
+  graph the files from 1, 2 and 12 threads came out byte for byte identical, on two machines.
 - Every bit of a graph file is flipped in turn and the loader has to refuse the file.
 - The gzip reader is checked against stored, fixed and dynamic Huffman blocks, multi member
   streams, truncation at many offsets and single bit flips.
