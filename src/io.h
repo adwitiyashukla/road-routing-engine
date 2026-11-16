@@ -56,9 +56,12 @@ class MappedFile {
 
   const std::uint8_t* data_ = nullptr;
   std::uint64_t size_ = 0;
+#if defined(_WIN32)
   void* file_handle_ = nullptr;
   void* map_handle_ = nullptr;
+#else
   int fd_ = -1;
+#endif
 };
 
 class FileWriter {
